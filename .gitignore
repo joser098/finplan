@@ -15,6 +15,7 @@
 
 # next.js
 /.next/
+/.next-integration/
 /out/
 
 # production
@@ -39,3 +40,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+!.env.example
+/artifacts/
+/test-results/
+/playwright-report/

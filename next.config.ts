@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  devIndicators: false,
+  poweredByHeader: false,
+  distDir: process.env.FINPLAN_BUILD_DIR || ".next",
 };
 
 export default nextConfig;
