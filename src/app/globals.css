@@ -1882,3 +1882,7 @@ tr:hover td {
 .not-found-page .brand-symbol { width:48px; height:48px; border-radius:14px; }
 .not-found-page .eyebrow { margin:0; }
 .not-found-page p { color:var(--muted); max-width:440px; line-height:1.8; }
+.receipt-actions { display:inline-flex; gap:12px; justify-content:flex-end; flex-wrap:wrap; }
+.receipt-actions .text-button { cursor:pointer; font-size:12px; }
+.receipt-error { display:block; margin-top:6px; color:#bc5c4b; }
+[data-theme="dark"] .receipt-error { color:#efb2a6; }

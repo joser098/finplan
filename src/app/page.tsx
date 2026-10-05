@@ -17,6 +17,7 @@ import {
   Ellipsis,
   House,
   LayoutGrid,
+  Paperclip,
   Plus,
   Repeat2,
   Search,
@@ -36,6 +37,13 @@ import {
   totals,
 } from "@/lib/finance";
 import { supabase } from "@/lib/supabase";
+import {
+  maxReceiptBytes,
+  receiptTypes,
+  receiptUrl,
+  removeReceipt,
+  uploadReceipt,
+} from "@/lib/receipts";
 import { useFinanceStore } from "@/lib/use-finance-store";
 type View =
   | "Inicio"
@@ -138,7 +146,7 @@ function FinanceApp() {
             {
               ...e,
               id: crypto.randomUUID(),
-              end: old.end,
+              receipt: undefined,
               installments: e.installments
                 ? Math.max(1, e.installments - diff)
                 : undefined,
@@ -146,12 +154,28 @@ function FinanceApp() {
           ],
         };
       }
-      return { ...d, overrides: { ...d.overrides, [`${e.id}:${month}`]: e } };
+      // The end month belongs to the whole series, not to a single month.
+      const { end, ...monthly } = e;
+      return {
+        ...d,
+        [key]: d[key].map((p) => (p.id === e.id ? { ...p, end } : p)),
+        overrides: { ...d.overrides, [`${e.id}:${month}`]: monthly },
+      };
     });
     setModal(null);
     setToast(
       user ? "Actualizando tu planificación…" : "Guardado en este dispositivo.",
     );
+  }
+  function attachReceipt(e: Entry, receipt: string | undefined) {
+    setData((d) => ({
+      ...d,
+      overrides: {
+        ...d.overrides,
+        [`${e.id}:${month}`]: { ...d.overrides[`${e.id}:${month}`], receipt },
+      },
+    }));
+    setToast(receipt ? "Comprobante guardado" : "Comprobante eliminado");
   }
   function exportData() {
     const url = URL.createObjectURL(
@@ -206,6 +230,9 @@ function FinanceApp() {
                             : "Ingreso puntual"
                           : e.category}
                         {e.interval > 0 && <Repeat2 size={11} />}
+                        {e.receipt && (
+                          <Paperclip size={11} aria-label="Con comprobante" />
+                        )}
                       </small>
                     </span>
                   </button>
@@ -960,6 +987,7 @@ function FinanceApp() {
                             <small>
                               Cada {e.interval} mes{e.interval > 1 ? "es" : ""}{" "}
                               · Día {Number(e.date.slice(8))}
+                              {e.end ? ` · Hasta ${monthName(e.end)}` : ""}
                               {e.variable ? " · Monto variable" : ""}
                             </small>
                           </span>
@@ -1083,6 +1111,8 @@ function FinanceApp() {
           cardMode={view === "Tarjeta"}
           close={() => setModal(null)}
           save={save}
+          user={user}
+          attachReceipt={(receipt) => attachReceipt(modal.entry!, receipt)}
           edit={() => setModal({ ...modal, detail: false })}
           mark={() => {
             mark(modal.entry!, modal.income);
@@ -1157,6 +1187,8 @@ function EntryModal({
   cardMode,
   close,
   save,
+  user,
+  attachReceipt,
   edit,
   mark,
 }: {
@@ -1167,6 +1199,8 @@ function EntryModal({
   cardMode: boolean;
   close: () => void;
   save: (e: Entry, scope: string) => void;
+  user: string | null;
+  attachReceipt: (receipt: string | undefined) => void;
   edit: () => void;
   mark: () => void;
 }) {
@@ -1191,6 +1225,47 @@ function EntryModal({
     },
   );
   const [scope, setScope] = useState("month");
+  const [receipt, setReceipt] = useState(e.receipt),
+    [receiptBusy, setReceiptBusy] = useState(false),
+    [receiptError, setReceiptError] = useState("");
+  async function changeReceipt(file: File | null) {
+    if (!user) return;
+    const previous = receipt;
+    setReceiptBusy(true);
+    setReceiptError("");
+    try {
+      if (file && file.size > maxReceiptBytes)
+        throw new Error("El comprobante no puede superar los 10 MB.");
+      const path = file
+        ? await uploadReceipt(user, e.id, month, file)
+        : undefined;
+      attachReceipt(path);
+      setReceipt(path);
+      // The plan no longer references the old file, so a failed cleanup is harmless.
+      if (previous) await removeReceipt(previous).catch(() => {});
+    } catch (err) {
+      setReceiptError(
+        err instanceof Error ? err.message : "No se pudo guardar el comprobante.",
+      );
+    } finally {
+      setReceiptBusy(false);
+    }
+  }
+  async function openReceipt() {
+    if (!receipt) return;
+    // Open synchronously so the browser does not block the pop-up.
+    const tab = window.open("", "_blank");
+    try {
+      const url = await receiptUrl(receipt);
+      if (tab) tab.location.href = url;
+      else window.location.href = url;
+    } catch (err) {
+      tab?.close();
+      setReceiptError(
+        err instanceof Error ? err.message : "No se pudo abrir el comprobante.",
+      );
+    }
+  }
   const set = (k: keyof Entry, v: string | number | boolean | undefined) =>
     setE((e) => ({ ...e, [k]: v }));
   useEffect(() => {
@@ -1261,9 +1336,58 @@ function EntryModal({
               <dt>Categoría</dt>
               <dd>{e.category}</dd>
               <dt>Frecuencia</dt>
-              <dd>{e.interval ? `Cada ${e.interval} mes(es)` : "Único"}</dd>
+              <dd>
+                {e.interval ? `Cada ${e.interval} mes(es)` : "Único"}
+                {e.interval > 0 && e.end ? ` · hasta ${monthName(e.end)}` : ""}
+              </dd>
               <dt>Notas</dt>
               <dd>{e.notes || "Sin notas"}</dd>
+              <dt>Comprobante</dt>
+              <dd>
+                {!user ? (
+                  "Iniciá sesión para adjuntar comprobantes"
+                ) : receiptBusy ? (
+                  "Guardando…"
+                ) : (
+                  <span className="receipt-actions">
+                    {receipt && (
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={openReceipt}
+                      >
+                        Ver
+                      </button>
+                    )}
+                    <label className="text-button">
+                      {receipt ? "Reemplazar" : "Cargar comprobante"}
+                      <input
+                        type="file"
+                        accept={receiptTypes}
+                        hidden
+                        onChange={(v) => {
+                          void changeReceipt(v.target.files?.[0] ?? null);
+                          v.target.value = "";
+                        }}
+                      />
+                    </label>
+                    {receipt && (
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => void changeReceipt(null)}
+                      >
+                        Quitar
+                      </button>
+                    )}
+                  </span>
+                )}
+                {receiptError && (
+                  <small className="receipt-error" role="alert">
+                    {receiptError}
+                  </small>
+                )}
+              </dd>
             </dl>
             <div className="modal-actions">
               <button className="secondary" onClick={edit}>
@@ -1371,7 +1495,10 @@ function EntryModal({
                 <input
                   type="checkbox"
                   checked={e.interval > 0}
-                  onChange={(v) => set("interval", v.target.checked ? 1 : 0)}
+                  onChange={(v) => {
+                    set("interval", v.target.checked ? 1 : 0);
+                    if (!v.target.checked) set("end", undefined);
+                  }}
                 />
                 {income ? "Ingreso recurrente" : "Pago recurrente"}
               </label>
@@ -1400,6 +1527,39 @@ function EntryModal({
                     Se repite el día {Number(e.date.slice(8))}. En meses más
                     cortos se usa el último día.
                   </small>
+                  {!e.installments && (
+                    <>
+                      <label className="checkbox">
+                        <input
+                          type="checkbox"
+                          checked={!!e.end}
+                          onChange={(v) =>
+                            set(
+                              "end",
+                              v.target.checked
+                                ? addMonth(e.date.slice(0, 7), 3)
+                                : undefined,
+                            )
+                          }
+                        />
+                        Se repite hasta un mes determinado
+                      </label>
+                      {e.end && (
+                        <label>
+                          Último mes
+                          <input
+                            required
+                            type="month"
+                            min={e.date.slice(0, 7)}
+                            value={e.end}
+                            onChange={(v) =>
+                              set("end", v.target.value || undefined)
+                            }
+                          />
+                        </label>
+                      )}
+                    </>
+                  )}
                   {!income && (
                     <label className="checkbox">
                       <input
@@ -1438,6 +1598,7 @@ function EntryModal({
                           v.target.value ? Number(v.target.value) : undefined,
                         );
                         set("interval", 1);
+                        set("end", undefined);
                       }}
                     />
                   </label>

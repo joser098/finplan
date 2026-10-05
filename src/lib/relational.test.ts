@@ -64,6 +64,22 @@ test("relational adapter preserves totals, currencies, recurrence and historical
   const delta = diffTables(toTables(fixture), toTables(changed));
   assert.equal(delta.monthly_overrides.upsert.length, 1);
   assert.equal(delta.payments.upsert.length, 0);
+  const receipt = `${owner}/phone/2026-09/r.pdf`;
+  const withReceipt = {
+    ...fixture,
+    overrides: { ...fixture.overrides, "phone:2026-09": { receipt } },
+  };
+  assert.equal(
+    toTables(withReceipt).monthly_overrides.find((r) => r.id === "phone:2026-09")
+      ?.receipt_path,
+    receipt,
+  );
+  assert.equal(
+    entriesFor(fromTables(toTables(withReceipt)).payments, "2026-09",
+      fromTables(toTables(withReceipt)).overrides).find((e) => e.id === "phone")
+      ?.receipt,
+    receipt,
+  );
 });
 
 test("Postgres migrations, legacy backfill, RLS, transactional writes and stale revision rejection", async () => {
@@ -91,6 +107,7 @@ test("Postgres migrations, legacy backfill, RLS, transactional writes and stale 
     // Simulate a project that applied the old signature before the account guard.
     await db.exec("drop function public.finance_write(bigint,jsonb,uuid); create function public.finance_write(bigint,jsonb) returns bigint language sql as $$ select 0::bigint $$;");
     await db.exec(await readFile('supabase/migrations/202609280003_account_scoped_writes.sql','utf8'));
+    await db.exec(await readFile('supabase/migrations/202610050001_override_receipts.sql','utf8'));
     assert.equal((await db.query<{old:unknown}>("select to_regprocedure('public.finance_write(bigint,jsonb)') as old")).rows[0].old,null);
     let currentAccount = owner;
     const login = async (user: string, role = "authenticated") => {

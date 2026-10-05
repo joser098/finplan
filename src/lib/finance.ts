@@ -13,6 +13,8 @@ export type Entry = {
   end?: string;
   card?: string;
   installments?: number;
+  /** Storage path of the receipt for one month; only stored in overrides. */
+  receipt?: string;
 };
 export type Data = {
   categories?: string[];
@@ -126,6 +128,7 @@ export function entriesFor(
               ? "Estimado"
               : "Pendiente",
         ...overrides[`${e.id}:${month}`],
+        end: e.end,
       },
     ];
   });

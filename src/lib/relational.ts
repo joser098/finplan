@@ -108,6 +108,7 @@ export function toTables(data: Data): Tables {
       end_month: o.end ?? null,
       card_id: payment ? o.card || null : null,
       total_installments: o.installments ?? null,
+      receipt_path: o.receipt ?? null,
     });
   }
   result.credit_cards = [...cards].map((name) => ({ id: name, name }));
@@ -161,6 +162,7 @@ export function fromTables(tables: Tables): Data {
     end_month: "end",
     card_id: "card",
     total_installments: "installments",
+    receipt_path: "receipt",
   } as const;
   for (const r of tables.monthly_overrides) {
     const o: Record<string, unknown> = {};
