@@ -85,6 +85,7 @@ function FinanceApp() {
     [search, setSearch] = useState(""),
     [months, setMonths] = useState(6),
     [modal, setModal] = useState<Modal | null>(null),
+    [paying, setPaying] = useState<Entry | null>(null),
     [toast, setToast] = useState("");
   const categories = paymentCategories(data);
   useEffect(() => {
@@ -108,13 +109,19 @@ function FinanceApp() {
     setFilter("Todos");
     setSearch("");
   }
-  function mark(e: Entry, income = false) {
+  // Marking a payment as paid offers an optional receipt first (signed-in only).
+  function requestMark(e: Entry, income = false) {
+    if (!income && e.status !== "Pagado" && user) setPaying(e);
+    else mark(e, income);
+  }
+  function mark(e: Entry, income = false, receipt?: string) {
     setData((d) => ({
       ...d,
       overrides: {
         ...d.overrides,
         [`${e.id}:${month}`]: {
           ...d.overrides[`${e.id}:${month}`],
+          ...(receipt ? { receipt } : {}),
           status: income
             ? e.status === "Cobrado"
               ? "Confirmado"
@@ -254,7 +261,7 @@ function FinanceApp() {
                           ? "Cambiar estado de cobro"
                           : "Marcar o desmarcar como pagado"
                       }
-                      onClick={() => mark(e, income)}
+                      onClick={() => requestMark(e, income)}
                     >
                       <Check size={15} />
                     </button>
@@ -1115,8 +1122,20 @@ function FinanceApp() {
           attachReceipt={(receipt) => attachReceipt(modal.entry!, receipt)}
           edit={() => setModal({ ...modal, detail: false })}
           mark={() => {
-            mark(modal.entry!, modal.income);
             setModal(null);
+            requestMark(modal.entry!, modal.income);
+          }}
+        />
+      )}
+      {paying && user && store.canEdit && (
+        <PayModal
+          entry={paying}
+          user={user}
+          month={month}
+          close={() => setPaying(null)}
+          confirm={(receipt) => {
+            mark(paying, false, receipt);
+            setPaying(null);
           }}
         />
       )}
@@ -1177,6 +1196,126 @@ function Chart({ values, currency }: { values: number[]; currency: Currency }) {
         </circle>
       ))}
     </svg>
+  );
+}
+function PayModal({
+  entry,
+  user,
+  month,
+  close,
+  confirm,
+}: {
+  entry: Entry;
+  user: string;
+  month: string;
+  close: () => void;
+  confirm: (receipt?: string) => void;
+}) {
+  const [file, setFile] = useState<File | null>(null),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  useEffect(() => {
+    const handler = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape" && !busy) close();
+    };
+    document.addEventListener("keydown", handler);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", handler);
+      document.body.style.overflow = "";
+    };
+  }, [close, busy]);
+  async function submit() {
+    if (!file) return confirm();
+    setBusy(true);
+    setError("");
+    try {
+      if (file.size > maxReceiptBytes)
+        throw new Error("El comprobante no puede superar los 10 MB.");
+      const path = await uploadReceipt(user, entry.id, month, file);
+      confirm(path);
+      // The plan no longer references the replaced file.
+      if (entry.receipt) void removeReceipt(entry.receipt).catch(() => {});
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "No se pudo subir el comprobante.",
+      );
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="modal-backdrop" onClick={() => !busy && close()}>
+      <section
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pay-title"
+        onClick={(ev) => ev.stopPropagation()}
+      >
+        <div className="modal-header">
+          <div>
+            <span className="eyebrow">{entry.name}</span>
+            <h2 id="pay-title">Marcar como pagado</h2>
+          </div>
+          <button
+            className="icon-button"
+            aria-label="Cerrar"
+            onClick={close}
+            disabled={busy}
+          >
+            <X size={21} />
+          </button>
+        </div>
+        <form
+          onSubmit={(ev) => {
+            ev.preventDefault();
+            void submit();
+          }}
+        >
+          <div className="form-body">
+            <div className="detail-amount">
+              {money(entry.amount, entry.currency)}
+            </div>
+            <label>
+              Comprobante (opcional)
+              <input
+                type="file"
+                accept={receiptTypes}
+                disabled={busy}
+                onChange={(v) => setFile(v.target.files?.[0] ?? null)}
+              />
+            </label>
+            <small>
+              {entry.receipt
+                ? "Este pago ya tiene un comprobante. Si elegís otro, se reemplaza."
+                : "Foto o PDF de hasta 10 MB. Podés agregarlo más tarde desde el detalle del pago."}
+            </small>
+            {error && (
+              <small className="receipt-error" role="alert">
+                {error}
+              </small>
+            )}
+          </div>
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="secondary"
+              onClick={close}
+              disabled={busy}
+            >
+              Cancelar
+            </button>
+            <button className="primary" disabled={busy}>
+              {busy
+                ? "Subiendo…"
+                : file
+                  ? "Guardar y marcar pagado"
+                  : "Marcar como pagado"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
   );
 }
 function EntryModal({
